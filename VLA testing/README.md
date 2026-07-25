@@ -14,6 +14,8 @@ environments and VLA policies to mjlab.
 - Added robot-mounted ego and wrist cameras. Both produce 256x256 RGB and depth;
   SmolVLA will consume RGB, while depth is retained for expert demonstrations,
   debugging, and future perception work.
+- The custom native viewer shows both live RGB camera feeds on the right side of
+  the simulation window.
 - The next step is to inspect and port the task scene into mjlab, replacing the
   original arm with the existing Go2+D1 robot.
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import mujoco
+import numpy as np
 import torch
 
 from mjlab.asset_zoo.robots import (
@@ -18,6 +19,43 @@ from mjlab.sensor import CameraSensorCfg
 from mjlab.sim import MujocoCfg, SimulationCfg
 from mjlab.terrains import TerrainEntityCfg
 from mjlab.viewer import NativeMujocoViewer, ViewerConfig
+
+
+class CameraPanelViewer(NativeMujocoViewer):
+  """Native viewer with live robot-camera images on the right side."""
+
+  _camera_names = ("ego_camera", "wrist_camera")
+  _panel_size = 256
+  _panel_margin = 12
+
+  def sync_env_to_viewer(self) -> None:
+    super().sync_env_to_viewer()
+    viewer = self.viewer
+    if viewer is None or not viewer.is_running():
+      return
+
+    window = viewer.viewport
+    panel_x = max(self._panel_margin, window.width - self._panel_size - 12)
+    panels: list[tuple[mujoco.MjrRect, np.ndarray]] = []
+
+    for index, camera_name in enumerate(self._camera_names):
+      rgb = self.env.unwrapped.scene[camera_name].data.rgb
+      if rgb is None:
+        continue
+
+      panel_y = window.height - (index + 1) * (self._panel_size + self._panel_margin)
+      panel_y = max(self._panel_margin, panel_y)
+      viewport = mujoco.MjrRect(
+        panel_x,
+        panel_y,
+        self._panel_size,
+        self._panel_size,
+      )
+      image = rgb[self.env_idx].detach().cpu().numpy()
+      panels.append((viewport, image))
+
+    if panels:
+      viewer.set_images(panels)
 
 
 def _make_pickable_spec(
@@ -238,7 +276,7 @@ def main() -> None:
   print("Custom Go2+D1 scene started in MuJoCo Warp.")
   print("Sensors: ego_camera and wrist_camera (256x256 RGB + depth).")
   print("Close the viewer or press Ctrl+C to stop.")
-  NativeMujocoViewer(env, zero_policy).run()
+  CameraPanelViewer(env, zero_policy).run()
 
 
 if __name__ == "__main__":

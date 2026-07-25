@@ -10,6 +10,7 @@ Added
 
 - Added a Unitree Go2 asset and flat/rough velocity tasks.
 - Added experimental Unitree D1 and Go2+D1 mobile manipulator assets.
+- Added live ego and wrist camera panels to the Go2+D1 VLA test scene.
 
 Changed
 ^^^^^^^
