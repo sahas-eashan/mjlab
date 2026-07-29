@@ -6,6 +6,6 @@ The package metadata declares a BSD license.
 
 The URDF is a SolidWorks export with mesh collision geometry and zero
 effort/velocity limits. mjlab supplies conservative placeholder actuator
-limits in `d1_constants.py`. The combined Go2+D1 asset currently disables D1
-mesh collisions and uses the arm visually/kinematically; add simplified
-primitive colliders before using it for contact-rich manipulation.
+limits in `d1_constants.py`. The combined Go2+D1 asset uses simplified box
+colliders on the gripper fingers for experimental manipulation while keeping
+the detailed finger, wrist, and arm-link meshes visual-only.

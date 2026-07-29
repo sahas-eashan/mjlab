@@ -140,21 +140,21 @@ def _customize_scene(spec: mujoco.MjSpec) -> None:
       rgba=wood,
     )
 
-  # A shallow green goal tray on the back-right corner of the table.
+  # A shallow green goal tray inside the D1 arm's reachable workspace.
   tray_color = (0.12, 0.55, 0.22, 1.0)
   _add_box(
     spec,
     name="target_tray_base",
-    pos=(0.83, -0.20, 0.435),
+    pos=(0.47, -0.18, 0.435),
     size=(0.10, 0.09, 0.01),
     rgba=tray_color,
   )
   for index, (pos, size) in enumerate(
     (
-      ((0.83, -0.285, 0.46), (0.10, 0.008, 0.025)),
-      ((0.83, -0.115, 0.46), (0.10, 0.008, 0.025)),
-      ((0.925, -0.20, 0.46), (0.008, 0.09, 0.025)),
-      ((0.735, -0.20, 0.46), (0.008, 0.09, 0.025)),
+      ((0.47, -0.265, 0.46), (0.10, 0.008, 0.025)),
+      ((0.47, -0.095, 0.46), (0.10, 0.008, 0.025)),
+      ((0.565, -0.18, 0.46), (0.008, 0.09, 0.025)),
+      ((0.375, -0.18, 0.46), (0.008, 0.09, 0.025)),
     )
   ):
     _add_box(
@@ -182,15 +182,42 @@ def _customize_scene(spec: mujoco.MjSpec) -> None:
     )
 
 
-def make_env_cfg() -> ManagerBasedRlEnvCfg:
+def _fixed_base_robot_cfg() -> EntityCfg:
+  """Create the Go2+D1 configuration used for arm-only VLA experiments."""
+  robot_cfg = get_go2_d1_robot_cfg()
+  source_spec_fn = robot_cfg.spec_fn
+
+  def fixed_base_spec() -> mujoco.MjSpec:
+    spec = source_spec_fn()
+    free_joint = next(
+      joint for joint in spec.joints if joint.type == mujoco.mjtJoint.mjJNT_FREE
+    )
+    spec.delete(free_joint)
+    # A free joint ignores the body's MJCF reference position, while the
+    # fixed-base mocap wrapper adds init_state.pos. Remove that added offset
+    # from the body reference so the compiled pose matches the free robot:
+    # base z=0.445 m and foot centers z=0.019 m.
+    base = spec.body("base")
+    base.pos = (
+      base.pos[0] - robot_cfg.init_state.pos[0],
+      base.pos[1] - robot_cfg.init_state.pos[1],
+      base.pos[2] - robot_cfg.init_state.pos[2],
+    )
+    return spec
+
+  robot_cfg.spec_fn = fixed_base_spec
+  return robot_cfg
+
+
+def make_env_cfg(*, fixed_base: bool = False) -> ManagerBasedRlEnvCfg:
   """Create the custom scene configuration."""
   cameras = (
     CameraSensorCfg(
       name="ego_camera",
       parent_body="robot/base",
-      pos=(0.30, 0.0, 0.10),
+      pos=(0.25, 0.0, 0.20),
       # MuJoCo cameras look along local -Z. This points forward and slightly down.
-      quat=(0.741, 0.331, -0.331, -0.403),
+      quat=(-0.5425, -0.4536, 0.4536, 0.5425),
       fovy=75.0,
       width=256,
       height=256,
@@ -199,20 +226,20 @@ def make_env_cfg() -> ManagerBasedRlEnvCfg:
     CameraSensorCfg(
       name="wrist_camera",
       parent_body="robot/d1/Link6",
-      pos=(0.0, 0.0, 0.06),
-      quat=(0.7071068, 0.0, 0.7071068, 0.0),
-      fovy=80.0,
+      pos=(0.05, 0.0, 0.03),
+      quat=(-0.0281, 0.7065, -0.7065, 0.0281),
+      fovy=90.0,
       width=256,
       height=256,
       data_types=("rgb", "depth"),
     ),
   )
   entities = {
-    "robot": get_go2_d1_robot_cfg(),
+    "robot": _fixed_base_robot_cfg() if fixed_base else get_go2_d1_robot_cfg(),
     "red_cube": _pickable_cfg(
-      position=(0.62, 0.12, 0.46),
+      position=(0.48, 0.10, 0.46),
       geom_type=mujoco.mjtGeom.mjGEOM_BOX,
-      size=(0.03, 0.03, 0.03),
+      size=(0.0225, 0.0225, 0.0225),
       rgba=(0.85, 0.08, 0.06, 1.0),
     ),
     "blue_cylinder": _pickable_cfg(

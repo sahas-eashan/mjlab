@@ -10,7 +10,17 @@ Added
 
 - Added a Unitree Go2 asset and flat/rough velocity tasks.
 - Added experimental Unitree D1 and Go2+D1 mobile manipulator assets.
+- Added a local Go2+D1 pick-and-place demonstration collector and LeRobot v3
+  converter with synchronized ego and wrist camera recordings.
 - Added live ego and wrist camera panels to the Go2+D1 VLA test scene.
+- Added an experimental BridgeData V2 real-demonstration retargeter for the D1
+  arm with pose-IK waypoints and physical-contact success rejection.
+- Added a language-conditioned SmolVLA inference runner for the Go2+D1 scene
+  with dual-camera input, D1 action limits, dry-run operation, and a base
+  stability stop.
+- Added keyboard Cartesian teleoperation for recording physically executed,
+  language-labelled Go2+D1 manipulation demonstrations with synchronized
+  ego/wrist video and finger effort.
 
 Changed
 ^^^^^^^
@@ -21,6 +31,15 @@ Changed
 
 Fixed
 ^^^^^
+
+- Corrected the local-axis dimensions of the experimental D1 finger collision
+  boxes used by the Go2+D1 manipulation scene.
+- Fixed Go2+D1 standing under gravity by using payload-specific leg position
+  gains, keeping the floating base supported by all four physical foot contacts
+  during SmolVLA arm inference.
+- Enabled the D1 URDF collision meshes for every arm, wrist, and finger link so
+  the end effector physically contacts scene objects instead of passing through
+  them.
 
 Version 1.5.3 (July 22, 2026)
 -----------------------------

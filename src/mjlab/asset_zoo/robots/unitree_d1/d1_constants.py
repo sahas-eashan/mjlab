@@ -39,16 +39,16 @@ def get_spec(*, visual_only: bool = False) -> mujoco.MjSpec:
 
 D1_ARM_ACTUATOR_CFG = BuiltinPositionActuatorCfg(
   target_names_expr=(".*Joint[1-6]",),
-  stiffness=40.0,
-  damping=4.0,
-  effort_limit=20.0,
+  stiffness=80.0,
+  damping=8.0,
+  effort_limit=60.0,
   armature=0.01,
 )
 D1_GRIPPER_ACTUATOR_CFG = BuiltinPositionActuatorCfg(
   target_names_expr=(".*Joint7_.*",),
-  stiffness=200.0,
-  damping=10.0,
-  effort_limit=30.0,
+  stiffness=300.0,
+  damping=15.0,
+  effort_limit=60.0,
   armature=0.001,
 )
 
