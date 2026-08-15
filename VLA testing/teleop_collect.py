@@ -14,13 +14,24 @@ import numpy as np
 import torch
 
 from mjlab.envs import ManagerBasedRlEnv
+from mjlab.sensor import ContactMatch, ContactSensorCfg
 
 FPS = 20
 ARM_SLICE = slice(12, 20)
 TASKS = {
   1: "Pick up the red cube and place it in the green tray.",
-  2: "Pick up the yellow block and place it in the green tray.",
-  3: "Pick up the blue cylinder and place it in the green tray.",
+  2: "Pick up the yellow cube and place it in the green tray.",
+  3: "Pick up the blue cube and place it in the green tray.",
+}
+CONTACT_SENSORS = {
+  1: "red_cube_finger_contact",
+  2: "yellow_block_finger_contact",
+  3: "blue_cylinder_finger_contact",
+}
+TASK_OBJECTS = {
+  1: "red_cube",
+  2: "yellow_block",
+  3: "blue_cylinder",
 }
 
 
@@ -45,11 +56,13 @@ class KeyboardTeleop:
     output: Path,
     step_size: float,
     command_gain: float,
+    visual_grasp_assist: bool,
   ):
     self.env = env
     self.output = output
     self.step_size = step_size
     self.command_gain = command_gain
+    self.visual_grasp_assist = visual_grasp_assist
     self.robot = env.scene["robot"]
     self.action_term = env.action_manager.get_term("joint_position")
 
@@ -81,6 +94,10 @@ class KeyboardTeleop:
     self._ego_frames: list[np.ndarray] = []
     self._wrist_frames: list[np.ndarray] = []
     self._finger_effort: list[np.ndarray] = []
+    self._grasp_stable = False
+    self._grip_latched = False
+    self._assist_local_offset: np.ndarray | None = None
+    self._assist_object_quat: torch.Tensor | None = None
 
   def reset(self) -> None:
     """Reset teleoperation state after the viewer resets the environment."""
@@ -89,6 +106,10 @@ class KeyboardTeleop:
       self._pending_command = None
       self._initialized = False
       self._recording = False
+      self._grasp_stable = False
+      self._grip_latched = False
+      self._assist_local_offset = None
+      self._assist_object_quat = None
       self._clear_buffers()
     print("Scene reset. Press C when ready to record.")
 
@@ -145,6 +166,10 @@ class KeyboardTeleop:
 
     if command == "gripper":
       self._gripper = "closed" if self._gripper == "open" else "open"
+      if self._gripper == "open":
+        self._grip_latched = False
+        self._assist_local_offset = None
+        self._assist_object_quat = None
       print(f"Gripper: {self._gripper}")
     elif command == "record":
       self._clear_buffers()
@@ -164,15 +189,41 @@ class KeyboardTeleop:
       np.array((0.028, -0.028), dtype=np.float32) if self._gripper == "open" else 0.0
     )
     target_state = self._clamp_target(self._held_target)
+    stable_grasp, any_contact, contact_forces = self._read_selected_contacts()
+    if self._gripper == "closed" and stable_grasp:
+      self._grip_latched = True
+    if (
+      self.visual_grasp_assist
+      and self._gripper == "closed"
+      and any_contact
+      and self._assist_local_offset is None
+    ):
+      self._start_visual_grasp_assist()
+    if stable_grasp != self._grasp_stable:
+      state = "STABLE" if stable_grasp else "LOST"
+      print(
+        f"Grasp {state}: left={contact_forces[0]:.2f} N, "
+        f"right={contact_forces[1]:.2f} N"
+      )
+      if not stable_grasp and self._grip_latched:
+        print("Contact interrupted; grip pressure remains latched.")
+      self._grasp_stable = stable_grasp
 
     if self._recording:
       self._record_frame(current_state, target_state)
 
+    control_state = target_state.copy()
+    if self._gripper == "closed" and self._grip_latched:
+      # Maintain contact pressure with a small target beyond closure. The
+      # actuator's existing effort limit remains the hard force cap.
+      control_state[6:] = (-0.005, 0.005)
+    if self._assist_local_offset is not None:
+      self._apply_visual_grasp_assist(target_state)
     raw_action = torch.zeros(
       (self.env.num_envs, self.env.action_manager.total_action_dim),
       device=self.env.device,
     )
-    target = torch.as_tensor(target_state, device=self.env.device).unsqueeze(0)
+    target = torch.as_tensor(control_state, device=self.env.device).unsqueeze(0)
     offset = self.action_term.offset[:, ARM_SLICE]
     scale = self.action_term.scale[:, ARM_SLICE]
     raw_action[:, ARM_SLICE] = (target - offset) / scale
@@ -252,6 +303,48 @@ class KeyboardTeleop:
     self._wrist_frames.append(wrist.astype(np.uint8))
     self._finger_effort.append(finger_effort.astype(np.float32))
 
+  def _read_selected_contacts(self) -> tuple[bool, bool, np.ndarray]:
+    data = self.env.scene[CONTACT_SENSORS[self._selected_task]].data
+    if data.found is None or data.force is None:
+      return False, False, np.zeros(2)
+    found = data.found[0, :2].detach().cpu().numpy() > 0
+    forces = torch.linalg.vector_norm(data.force[0, :2], dim=-1).detach().cpu().numpy()
+    return bool(np.all(found)), bool(np.any(found)), forces
+
+  def _start_visual_grasp_assist(self) -> None:
+    entity = self.env.scene[TASK_OBJECTS[self._selected_task]]
+    object_pose = entity.data.root_link_pose_w[0].detach().clone()
+    grasp_point = self.expert.grasp_point(self.ik_data)
+    link_rotation = self.ik_data.xmat[self.expert.link_id].reshape(3, 3)
+    self._assist_local_offset = link_rotation.T @ (
+      object_pose[:3].cpu().numpy() - grasp_point
+    )
+    self._assist_object_quat = object_pose[3:7]
+    print("Visual grasp assist locked. Press G to release.")
+
+  def _apply_visual_grasp_assist(self, target_state: np.ndarray) -> None:
+    assert self._assist_local_offset is not None
+    assert self._assist_object_quat is not None
+    entity = self.env.scene[TASK_OBJECTS[self._selected_task]]
+    self.ik_data.qpos[self.expert.state_qpos] = target_state
+    mujoco.mj_forward(self.ik_model, self.ik_data)
+    grasp_point = self.expert.grasp_point(self.ik_data)
+    link_rotation = self.ik_data.xmat[self.expert.link_id].reshape(3, 3)
+    desired_position = grasp_point + link_rotation @ self._assist_local_offset
+    current_position = entity.data.root_link_pose_w[0, :3].detach().cpu().numpy()
+    position_error = desired_position - current_position
+    # Follow over one control period using velocity instead of snapping qpos.
+    # The upward term cancels gravity over the interval, while the cap keeps
+    # presentation motion visibly continuous.
+    linear_velocity = np.clip(
+      position_error * FPS + np.array((0.0, 0.0, 0.5 * 9.81 / FPS)),
+      -0.65,
+      0.65,
+    )
+    velocity = torch.zeros((1, 6), device=self.env.device)
+    velocity[0, :3] = torch.as_tensor(linear_velocity, device=self.env.device)
+    entity.write_root_link_velocity_to_sim(velocity)
+
   def _save_episode(self) -> None:
     self._recording = False
     if len(self._actions) < 10:
@@ -272,6 +365,7 @@ class KeyboardTeleop:
       observation_state=np.stack(self._states),
       action=np.stack(self._actions),
       finger_effort=np.stack(self._finger_effort),
+      grasp_assist=np.asarray(self.visual_grasp_assist),
       task=np.asarray(TASKS[self._selected_task]),
       success=np.asarray(True),
       fps=np.asarray(FPS),
@@ -289,6 +383,8 @@ class KeyboardTeleop:
       quality=8,
     )
     print(f"Saved successful demo: {episode_dir} ({len(self._actions)} frames)")
+    if self.visual_grasp_assist:
+      print("Episode metadata: grasp_assist=True")
     print("Press Enter to reset the scene before the next demonstration.")
     self._clear_buffers()
 
@@ -324,6 +420,11 @@ def main() -> None:
     default=2.0,
     help="Multiplier for each arm-joint Cartesian tracking update.",
   )
+  parser.add_argument(
+    "--visual-grasp-assist",
+    action="store_true",
+    help="Lock a contacted object to the gripper for presentation video only.",
+  )
   args = parser.parse_args()
 
   scene = _load_module("start_custom_scene.py", "vla_custom_scene")
@@ -332,12 +433,39 @@ def main() -> None:
   env_cfg.decimation = 10
   for camera in env_cfg.scene.sensors:
     camera.data_types = ("rgb",)
+  finger_match = ContactMatch(
+    mode="geom",
+    pattern=(
+      "robot/d1/Link7_1_collision",
+      "robot/d1/Link7_2_collision",
+    ),
+  )
+  contact_sensors = tuple(
+    ContactSensorCfg(
+      name=sensor_name,
+      primary=finger_match,
+      secondary=ContactMatch(
+        mode="geom",
+        pattern=f"{object_name}/collision",
+      ),
+      fields=("found", "force"),
+      reduce="maxforce",
+      history_length=10,
+    )
+    for object_name, sensor_name in (
+      ("red_cube", CONTACT_SENSORS[1]),
+      ("yellow_block", CONTACT_SENSORS[2]),
+      ("blue_cylinder", CONTACT_SENSORS[3]),
+    )
+  )
+  env_cfg.scene.sensors = (*env_cfg.scene.sensors, *contact_sensors)
   env = ManagerBasedRlEnv(env_cfg, device=device)
   teleop = KeyboardTeleop(
     env,
     output=args.output,
     step_size=args.step_size,
     command_gain=args.command_gain,
+    visual_grasp_assist=args.visual_grasp_assist,
   )
   observation, _ = env.reset()
 

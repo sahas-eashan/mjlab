@@ -50,6 +50,13 @@ def parse_args() -> argparse.Namespace:
     action="store_true",
     help="Replace an existing output dataset.",
   )
+  parser.add_argument(
+    "--require-key",
+    help=(
+      "Convert only episodes whose trajectory.npz contains this metadata key "
+      "(for example, layout_xy for randomized automatic demonstrations)."
+    ),
+  )
   return parser.parse_args()
 
 
@@ -123,6 +130,14 @@ def convert(args: argparse.Namespace) -> None:
   output_dir = args.output.resolve()
   episodes = discover_episodes(input_dir)
   validated = [(path, *validate_episode(path)) for path in episodes]
+  if args.require_key:
+    validated = [item for item in validated if args.require_key in item[1]]
+    if not validated:
+      raise ValueError(f"No episodes contain required key {args.require_key!r}")
+    print(
+      f"Selected {len(validated)}/{len(episodes)} episodes containing "
+      f"{args.require_key!r}"
+    )
 
   fps_values = {fps for _, _, fps, _ in validated}
   if len(fps_values) != 1:

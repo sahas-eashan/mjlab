@@ -21,10 +21,39 @@ Added
 - Added keyboard Cartesian teleoperation for recording physically executed,
   language-labelled Go2+D1 manipulation demonstrations with synchronized
   ego/wrist video and finger effort.
+- Added selected-object contact sensing for both D1 fingers and capped
+  grip-pressure maintenance during teleoperated demonstrations.
+- Added matching contact-triggered visual grasp assistance to demonstration
+  collection and SmolVLA inference, with assisted-dataset metadata.
+- Added a disclosed presentation-only SmolVLA supervisor that combines
+  language-selected objects, position-only Cartesian guidance, and contact
+  grasp retention for reliable Go2+D1 pick-and-place videos.
+- Added interactive terminal instructions to the presentation runner so one
+  loaded model and viewer can execute multiple tasks in a continuous recording.
+- Added a minimally assisted SmolVLA mode that preserves learned arm control and
+  limits deterministic intervention to local object/tray alignment and contact
+  grasp stabilization.
+- Added balanced automatic multitask demonstration collection with independent
+  object-layout randomization, camera visibility checks, contact-assisted grasp
+  retention, and successful-placement rejection.
+- Added raw-trajectory metadata filtering to the LeRobot converter for building
+  clean training subsets such as randomized-layout-only demonstrations.
+- Added a fresh-base SmolVLA fine-tuning launcher for the balanced randomized
+  Go2+D1 multitask dataset.
+- Changed interactive task completion and viewer reset to restore the terminal
+  prompt and actively hold the D1 arm in a fixed neutral waiting pose.
+- Added a configurable D1 arm-speed limiter for slower visual evaluation while
+  preserving SmolVLA predictions and camera replanning behavior.
+- Added asynchronous SmolVLA action-chunk inference so slow VLM predictions no
+  longer block the 20 Hz MuJoCo simulation and camera viewer.
 
 Changed
 ^^^^^^^
 
+- Reshuffled the three Go2+D1 VLA cubes to a new separated, camera-visible,
+  arm-reachable arrangement while retaining the existing tray location.
+- Reshuffled the three Go2+D1 presentation cubes to separated, reachable table
+  positions while leaving the target tray fixed.
 - Changed the default MuJoCo Warp render background to solid black
   (``0, 0, 0, 1``), matching MuJoCo's native renderer. Contribution by
   @bd-pmorais.
@@ -32,6 +61,12 @@ Changed
 Fixed
 ^^^^^
 
+- Fixed the minimally assisted SmolVLA grasp handoff by adding a bounded local
+  approach and geometry-triggered finger closing before contact retention.
+- Fixed repeated object drops during assisted transport by latching contact
+  retention until a model-requested release occurs inside the tray region.
+- Fixed assisted placements remaining attached over the tray by adding a short
+  tray-region dwell followed by a one-shot release and re-grasp lockout.
 - Corrected the local-axis dimensions of the experimental D1 finger collision
   boxes used by the Go2+D1 manipulation scene.
 - Fixed Go2+D1 standing under gravity by using payload-specific leg position

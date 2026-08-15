@@ -82,11 +82,55 @@ Run the CUDA setup once. The project environment otherwise uses CPU-only
 PyTorch, which makes the two-camera simulation respond far below real time.
 The teleoperator captures RGB only because SmolVLA does not consume depth,
 and uses faster Cartesian tracking than the scripted demonstration controller.
+Object-filtered contact sensors independently monitor both D1 fingers. When
+both fingers contact the selected object, a small capped over-close command
+maintains grip pressure; the existing actuator effort limit remains the hard
+safety bound.
+
+For presentation video only, lock a detected object to the closed gripper:
+
+```powershell
+& ".\VLA testing\teleop_collect.ps1" --visual-grasp-assist
+```
+
+Assisted episodes can be saved and include `grasp_assist=True` in their raw
+metadata. They are intended for the matching assisted SmolVLA runtime, not for
+evaluating unassisted physical grasping or transferring directly to hardware.
 
 The teleoperator records both camera views, the eight D1 joint values and
 commands, the instruction, and finger actuator effort. It never teleports or
 attaches an object. Raw episodes are written to
 `VLA testing/data/go2_d1_multitask_raw`.
+
+Generate additional balanced demonstrations automatically with randomized,
+camera-visible object layouts:
+
+```powershell
+$env:UV_PROJECT_ENVIRONMENT = ".venv-windows"
+uv run --no-sync python ".\VLA testing\auto_collect_multitask.py" --episodes-per-task 30
+```
+
+The automatic collector alternates red, yellow, and blue tasks, independently
+randomizes color-to-position assignments, rejects layouts where any cube has
+too few ego-camera pixels, requires target visibility in both camera streams,
+and saves only successful tray placements. It uses the same disclosed
+contact-triggered visual grasp retention as the assisted runtime.
+
+Create a clean LeRobot dataset containing only these randomized episodes:
+
+```powershell
+uv run --no-project --with "lerobot[dataset]==0.6.0" --with "imageio[ffmpeg]" python ".\VLA testing\convert_to_lerobot.py" --input ".\VLA testing\data\go2_d1_multitask_raw" --output ".\VLA testing\data\go2_d1_multitask_randomized_lerobot" --repo-id "local/go2_d1_multitask_randomized" --require-key layout_xy
+```
+
+Fine-tune a fresh SmolVLA base policy on the randomized subset:
+
+```powershell
+& ".\VLA testing\train_smolvla_randomized.ps1"
+```
+
+This intentionally starts from the local SmolVLA base weights instead of the
+red-biased 100K checkpoint. It trains for 50,000 steps and saves every 5,000
+steps under `outputs/smolvla_randomized_50k`.
 
 Convert those demonstrations with:
 
@@ -153,8 +197,9 @@ uv run --no-sync --index "https://download.pytorch.org/whl/cu126" --index-strate
 Add `--execute` only after training a useful checkpoint. Execution keeps Go2's
 legs at their standing targets, limits each D1 action step, clamps joint limits,
 and holds the arm if the base height or tilt crosses the safety threshold. The
-runner now loads `outputs/smolvla_full_20k/checkpoints/last/pretrained_model`
-by default. Use `--checkpoint` to evaluate another saved policy.
+runner now loads the multitask checkpoint at
+`outputs/smolvla_multitask_50k/checkpoints/last/pretrained_model` by default.
+Use `--checkpoint` to evaluate another saved policy.
 
 The shorter PowerShell launcher runs the same command:
 
@@ -168,6 +213,61 @@ After checking the dry-run predictions and scene, enable D1 movement with:
 & ".\VLA testing\run_smolvla.ps1" -Execute
 ```
 
+Run a policy trained on assisted demonstrations with the matching low-level
+grasp follower:
+
+```powershell
+& ".\VLA testing\run_smolvla.ps1" -Execute -GraspAssist -Instruction "Pick up the yellow block and place it in the green tray."
+```
+
+The instruction selects the red cube, yellow block, or blue cylinder contact
+sensor. The follower activates only after a closed gripper contacts that object
+and releases when SmolVLA commands the gripper open.
+
+For a reliable presentation rollout, enable the disclosed hybrid supervisor:
+
+```powershell
+& ".\VLA testing\run_smolvla.ps1" -Execute -PresentationAssist -Instruction "Pick up the blue cube and place it in the green tray."
+```
+
+SmolVLA still processes both live cameras and the language instruction. A
+deterministic position-only Cartesian supervisor routes the arm to the object
+named by the instruction, while the contact follower retains it and the
+supervisor places it in the tray. This mode is assisted VLA behavior and must
+not be presented as end-to-end autonomous SmolVLA control.
+
+Load the model once and enter presentation tasks continuously from the terminal:
+
+```powershell
+& ".\VLA testing\run_smolvla.ps1" -Execute -PresentationAssist -InteractiveInstructions
+```
+
+After the viewer opens, type `red`, `yellow`, `blue`, or a complete instruction
+at the `task>` prompt. The viewer remains open and each new instruction resets
+the task supervisor without reloading the model or resetting the scene, so a
+single continuous screen recording can contain several commands. The prompt
+returns only after the current placement completes. Pressing Enter in the
+viewer resets both the scene and interactive console; while waiting, the D1 is
+actively commanded to a fixed neutral pose with its gripper open.
+
+To evaluate SmolVLA with substantially smaller low-level patches, use:
+
+```powershell
+& ".\VLA testing\run_smolvla.ps1" -Execute -VlaAssist -Instruction "Pick up the blue cube and place it in the green tray."
+```
+
+In this mode SmolVLA controls the broad arm trajectory and must independently
+enter a 20 cm neighborhood of the requested object and transport it near the
+tray. Position-only IK then contributes a bounded local approach, keeps the
+fingers open until the hand enters the final grasp zone, and closes them before
+contact-triggered retention takes over. The retention latch rejects premature
+open predictions during transport. After the held object remains low and within
+10 cm of the tray centre for eight control frames, the local controller opens
+the fingers once and prevents immediate re-grasping. A 25% correction remains
+available within 12 cm of the tray. This is hybrid VLA behavior—not end-to-end autonomous
+grasping—and can still fail if the learned policy selects the wrong object or
+never enters the local grasp neighborhood.
+
 The SmolVLA runtime uses a floating Go2 base with normal gravity and foot
 contacts. Payload-specific leg position gains support the D1 arm while SmolVLA
 controls only the eight arm and gripper joints.
@@ -176,6 +276,24 @@ The runtime executes ten actions (0.5 seconds at 20 Hz) from each predicted
 action chunk before processing fresh camera frames. Change this receding-horizon
 interval with `-ReplanSteps`; lower values react more frequently but require
 more GPU inference.
+
+For visually closed-loop evaluation, use `-ReplanSteps 1` so every control step
+uses a fresh camera-conditioned prediction. Use `-ArmSpeedScale 0.35` to reduce
+the D1 per-step joint limit to 35% without changing the policy outputs.
+
+For smooth real-time viewing, run SmolVLA action-chunk generation in a background
+worker. This is the recommended command for the balanced randomized checkpoint:
+
+```powershell
+& ".\VLA testing\run_smolvla.ps1" -Checkpoint ".\VLA testing\outputs\smolvla_randomized_50k\checkpoints\050000\pretrained_model" -Execute -VlaAssist -AsyncInference -ReplanSteps 50 -Instruction "Pick up the blue cube and place it in the green tray."
+```
+
+MuJoCo and both camera panels continue at 20 Hz while the model predicts the
+next 50-action chunk from the latest available ego, wrist, state, and language
+observation. The worker starts prefetching before the current chunk is empty. If
+the GPU is still late, the controller safely holds its last target instead of
+freezing the viewer or applying a burst of actions. This fixes execution timing;
+it does not conceal autonomous selection or trajectory failures.
 
 ## Full local fine-tuning
 

@@ -145,16 +145,16 @@ def _customize_scene(spec: mujoco.MjSpec) -> None:
   _add_box(
     spec,
     name="target_tray_base",
-    pos=(0.47, -0.18, 0.435),
+    pos=(0.50, 0.16, 0.435),
     size=(0.10, 0.09, 0.01),
     rgba=tray_color,
   )
   for index, (pos, size) in enumerate(
     (
-      ((0.47, -0.265, 0.46), (0.10, 0.008, 0.025)),
-      ((0.47, -0.095, 0.46), (0.10, 0.008, 0.025)),
-      ((0.565, -0.18, 0.46), (0.008, 0.09, 0.025)),
-      ((0.375, -0.18, 0.46), (0.008, 0.09, 0.025)),
+      ((0.50, 0.075, 0.46), (0.10, 0.008, 0.025)),
+      ((0.50, 0.245, 0.46), (0.10, 0.008, 0.025)),
+      ((0.595, 0.16, 0.46), (0.008, 0.09, 0.025)),
+      ((0.405, 0.16, 0.46), (0.008, 0.09, 0.025)),
     )
   ):
     _add_box(
@@ -237,21 +237,21 @@ def make_env_cfg(*, fixed_base: bool = False) -> ManagerBasedRlEnvCfg:
   entities = {
     "robot": _fixed_base_robot_cfg() if fixed_base else get_go2_d1_robot_cfg(),
     "red_cube": _pickable_cfg(
-      position=(0.48, 0.10, 0.46),
+      position=(0.43, -0.17, 0.46),
       geom_type=mujoco.mjtGeom.mjGEOM_BOX,
       size=(0.0225, 0.0225, 0.0225),
       rgba=(0.85, 0.08, 0.06, 1.0),
     ),
     "blue_cylinder": _pickable_cfg(
-      position=(0.75, 0.12, 0.47),
-      geom_type=mujoco.mjtGeom.mjGEOM_CYLINDER,
-      size=(0.028, 0.04, 0.0),
+      position=(0.55, -0.08, 0.46),
+      geom_type=mujoco.mjtGeom.mjGEOM_BOX,
+      size=(0.0225, 0.0225, 0.0225),
       rgba=(0.05, 0.25, 0.85, 1.0),
     ),
     "yellow_block": _pickable_cfg(
-      position=(0.88, 0.10, 0.455),
+      position=(0.42, 0.00, 0.46),
       geom_type=mujoco.mjtGeom.mjGEOM_BOX,
-      size=(0.045, 0.022, 0.022),
+      size=(0.0225, 0.0225, 0.0225),
       rgba=(0.95, 0.72, 0.05, 1.0),
     ),
   }
